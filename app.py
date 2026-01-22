@@ -374,7 +374,7 @@ def simulate_case(
 # Plot (dual axis, OP green, PV thicker)
 # =========================================================
 def make_plot(t, sp, pv, op, title, op_min, op_max):
-    fig, ax = plt.subplots(figsize=(12, 4.2), dpi=160)
+    fig, ax = plt.subplots(figsize=(13.5, 6.2), dpi=170)
 
     # SP/PV (EU)
     ax.step(t, sp, where="post", label="SP [EU]", linewidth=2.0)
@@ -584,15 +584,15 @@ if do_sim:
         )
 
         # Plots
-        pcol1, pcol2 = st.columns(2, gap="large")
+        pcol1, pcol2 = st.columns([1,1], gap="large")
         with pcol1:
             st.subheader("Trend: Vorher")
             fig1 = make_plot(t1, sp1, pv1, op1, "PID Regler vorher", op_min, op_max)
-            st.pyplot(fig1, clear_figure=True)
+            st.pyplot(fig1, clear_figure=True, use_container_width=True)
         with pcol2:
             st.subheader("Trend: Nachher")
             fig2 = make_plot(t2, sp2, pv2, op2, "PID Regler nachher", op_min, op_max)
-            st.pyplot(fig2, clear_figure=True)
+            st.pyplot(fig2, clear_figure=True, use_container_width=True)
 
         # Metrics
         if mode == "SP":
