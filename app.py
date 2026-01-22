@@ -444,7 +444,7 @@ with st.sidebar:
 
     st.header("Arbeitspunkt")
     sp0 = st.number_input("SP0 (EU)", value=102.0, format="%.6f")
-    op0 = st.number_input("OP0 (%)", value=52.0, format="%.6f", disabled=op0_auto)
+    op0 = st.number_input("OP0 (%)", value=52.0, format="%.6f")
     op0_auto = st.checkbox("OP0 aus SP0/Gain schätzen", value=True)
 
     st.header("Test")
