@@ -445,7 +445,7 @@ with st.sidebar:
     st.header("Arbeitspunkt")
     sp0 = st.number_input("SP0 (EU)", value=102.0, format="%.6f")
     op0 = st.number_input("OP0 (%)", value=52.0, format="%.6f")
-    op0_auto = st.checkbox("OP0 aus SP0/Gain schätzen", value=False)
+    op0_auto = st.checkbox("OP0 aus SP0/Gain schätzen", value=True)
 
     st.header("Test")
     test_mode = st.selectbox("Modus", ["SP (Servo)", "OP (Disturbance)"], index=0)
@@ -535,11 +535,12 @@ if do_sim:
         st.error("dt und t_end müssen > 0 sein.")
     else:
         # OP0 auto option
-        if op0_auto:
+       if op0_auto:
             if abs(gain) < 1e-12:
                 st.warning("Gain ist 0 → OP0 aus SP0/Gain nicht möglich. OP0 bleibt wie eingegeben.")
             else:
                 op0 = clamp(float(sp0) / float(gain), float(op_min), float(op_max))
+                st.caption(f"OP0 geschätzt: {op0:.3f} % (aus SP0/Gain, begrenzt auf OP Min/Max)")
 
         mode = "SP" if test_mode.startswith("SP") else "OP"
         damp_used = float(damp) if model_type == "PT2" else 0.0
