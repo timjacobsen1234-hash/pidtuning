@@ -15,6 +15,7 @@ def eu_to_pct(x_eu, lrv, urv):
         span = 1.0
     return 100.0 * (x_eu - lrv) / span
 
+
 def fmt(x, nd=3):
     if x is None:
         return "—"
