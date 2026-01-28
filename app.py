@@ -138,6 +138,89 @@ def metrics_disturbance(t_min, sp_eu, pv_eu, op_pct, t_step_min, band=0.02):
         "Min OP [%]": float(np.min(op)),
     }
 
+def suggest_pid_changes(model_type, tau, dead, after_params, m_after):
+    """
+    Gibt konkrete Vorschläge für neue Parameter basierend auf Kennzahlen.
+    after_params: dict mit Kc, Ti, Td, eq, reverse, d_filter
+    m_after: dict Kennzahlen aus metrics_servo/metrics_disturbance
+    """
+    Kc = float(after_params["Kc"])
+    Ti = float(after_params["Ti"])
+    Td = float(after_params["Td"])
+    eq = str(after_params["eq"])
+    d_filter = float(after_params["d_filter"])
+
+    rec = []
+    new = dict(Kc=Kc, Ti=Ti, Td=Td, eq=eq, d_filter=d_filter)
+
+    # ---- Regeln (Servo / SP-Step) ----
+    overshoot = m_after.get("Overshoot [%]", None)
+    rise = m_after.get("Rise time [min]", None)
+    settling = m_after.get("Settling time [min]", None)
+    sse = m_after.get("Steady-state error [EU]", None)
+
+    # 1) Stationärer Fehler
+    if sse is not None and abs(sse) > 0.02:  # 0.02 EU als pragmatische Schwelle
+        rec.append(f"- **Stationärer Fehler** ist {sse:.3f} EU → Integrator wirkt zu schwach oder OP ist begrenzt.")
+        if Ti > 1e-9:
+            new["Ti"] = max(0.7 * Ti, 0.05)  # schneller integrieren
+            rec.append(f"  → Vorschlag: **Ti kleiner**: {Ti:.3f} → **{new['Ti']:.3f} min**")
+        else:
+            rec.append("  → Vorschlag: **PI/PID verwenden** (Ti > 0 setzen), sonst bleibt Offset.")
+
+    # 2) Overshoot
+    if overshoot is not None:
+        if overshoot > 10:
+            rec.append(f"- **Overshoot** ist {overshoot:.1f}% → Regler zu aggressiv.")
+            new["Kc"] = 0.7 * Kc
+            new["Ti"] = 1.3 * Ti if Ti > 1e-9 else Ti
+            rec.append(f"  → Vorschlag: **Kc reduzieren**: {Kc:.4f} → **{new['Kc']:.4f}**")
+            if Ti > 1e-9:
+                rec.append(f"  → Vorschlag: **Ti erhöhen**: {Ti:.3f} → **{new['Ti']:.3f} min**")
+        elif 5 < overshoot <= 10:
+            rec.append(f"- **Overshoot** ist {overshoot:.1f}% → leicht zu aggressiv.")
+            new["Kc"] = 0.85 * Kc
+            rec.append(f"  → Vorschlag: **Kc etwas reduzieren**: {Kc:.4f} → **{new['Kc']:.4f}**")
+
+    # 3) Einschwingzeit / „Schwingen“
+    if settling is not None and tau > 1e-9:
+        if settling > 8.0 * tau:
+            rec.append(f"- **Settling Time** ist {settling:.2f} min (>> 8·Tau={8*tau:.2f}) → langsam/Schwingen möglich.")
+            # wenn Overshoot auch hoch: dämpfen, sonst aggressiver machen
+            if overshoot is not None and overshoot > 5:
+                new["Kc"] = min(new["Kc"], 0.85 * Kc)
+                rec.append(f"  → Vorschlag: **Kc reduzieren**: {Kc:.4f} → **{new['Kc']:.4f}**")
+                # D hinzufügen, falls noch kein D
+                if Td < 1e-6 and model_type == "PT2":
+                    new["Td"] = 0.15 * tau
+                    rec.append(f"  → Vorschlag: **D ergänzen** (bei Schwingen): Td = **{new['Td']:.3f} min**")
+                    if eq in ("EqA", "EqD", "EqE"):
+                        new["eq"] = "EqB"  # D on PV ist meist robuster
+                        rec.append(f"  → Vorschlag: **EQ auf EqB** (D auf PV, meist robuster): {eq} → **{new['eq']}**")
+                    if d_filter <= 1e-9:
+                        new["d_filter"] = 0.1 * new["Td"]
+                        rec.append(f"  → Vorschlag: **D-Filter** ≈ 0.1·Td: **{new['d_filter']:.3f} min**")
+            else:
+                # zu träge, aber nicht overshoot-lastig
+                new["Kc"] = 1.15 * Kc
+                rec.append(f"  → Vorschlag: **Kc erhöhen** (schneller): {Kc:.4f} → **{new['Kc']:.4f}**")
+
+    # 4) Rise time sehr träge (ohne große Überschwinger)
+    if rise is not None and tau > 1e-9:
+        if rise > 3.0 * tau and (overshoot is None or overshoot < 5):
+            rec.append(f"- **Rise Time** ist {rise:.2f} min (> 3·Tau={3*tau:.2f}) und Overshoot klein → Regler eher zu träge.")
+            new["Kc"] = max(new["Kc"], 1.2 * Kc)
+            rec.append(f"  → Vorschlag: **Kc erhöhen**: {Kc:.4f} → **{new['Kc']:.4f}**")
+            if Ti > 1e-9:
+                new["Ti"] = 0.85 * Ti
+                rec.append(f"  → Vorschlag: **Ti etwas kleiner**: {Ti:.3f} → **{new['Ti']:.3f} min**")
+
+    # fallback
+    if not rec:
+        rec.append("- Kennzahlen sehen insgesamt stabil aus. Nächster Schritt wäre Feintuning über **Kc ±10%** oder Zielvorgaben (Overshoot/Settling).")
+
+    return rec, new
+
 # =========================================================
 # Deadtime (minutes)
 # =========================================================
@@ -616,5 +699,40 @@ if do_sim:
         st.table({"Kennzahl": [r[0] for r in rows],
                   "Vorher":   [r[1] for r in rows],
                   "Nachher":  [r[2] for r in rows]})
+        st.subheader("Auswertung & konkrete Vorschläge (für Nachher)")
+
+after_params = dict(
+    eq=st.session_state.after["eq"],
+    reverse=st.session_state.after["reverse"],
+    Kc=st.session_state.after["Kc"],
+    Ti=st.session_state.after["Ti"],
+    Td=st.session_state.after["Td"],
+    d_filter=st.session_state.after["d_filter"],
+)
+
+rec_lines, suggested = suggest_pid_changes(
+    model_type=model_type,
+    tau=float(tau),
+    dead=float(dead),
+    after_params=after_params,
+    m_after=m2  # "Nachher"-Kennzahlen
+)
+
+st.markdown("\n".join(rec_lines))
+
+apply_col1, apply_col2 = st.columns([1, 2])
+with apply_col1:
+    if st.button("Vorschlag übernehmen (Nachher)"):
+        st.session_state.after["Kc"] = float(suggested["Kc"])
+        st.session_state.after["Ti"] = float(suggested["Ti"])
+        st.session_state.after["Td"] = float(suggested["Td"])
+        st.session_state.after["eq"] = str(suggested["eq"])
+        st.session_state.after["d_filter"] = float(suggested["d_filter"])
+        st.success("Vorschlag übernommen. Bitte nochmal Simulieren.")
+with apply_col2:
+    st.caption(
+        f"Vorschlag: EQ={suggested['eq']}, Kc={suggested['Kc']:.4f}, Ti={suggested['Ti']:.3f} min, "
+        f"Td={suggested['Td']:.3f} min, D-Filter={suggested['d_filter']:.3f} min"
+    )
 else:
     st.info("Links in der Sidebar **IMC berechnen** oder **Simulieren** drücken.")
